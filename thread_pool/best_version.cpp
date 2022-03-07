@@ -38,11 +38,6 @@ public:
         }
     }
 
-    Task(const Task& other) : is_void{ other.is_void }, void_func{ other.void_func },
-        any_func{ other.any_func }, any_func_result{ other.any_func_result } {}
-
-    Task() : is_void{ true } {}
-
     Task operator= (const Task& other) {
         return Task(other);
     }
