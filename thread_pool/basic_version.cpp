@@ -118,37 +118,42 @@ void trr() {
 }
 
 
-void thread_pool_test() {
-    thread_pool t(6);
-    int ans[12];
-    std::vector<int> arr1(10000);
-
+void thread_pool_test(std::vector<int> ans, std::vector<int> arr) {
     auto begin = std::chrono::high_resolution_clock::now();
-    for (int i = 0; i < 12; ++i) {
-        t.add_task(sum, std::ref(ans[i]), std::ref(arr1));
+
+    thread_pool t(6);
+    for (int i = 0; i < ans.size(); ++i) {
+        t.add_task(sum, std::ref(ans[i]), std::ref(arr));
     }
     t.wait_all();
+
     auto end = std::chrono::high_resolution_clock::now();
     std::cout << std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count();
 }
 
-void without_thread_test() {
-    int ans[12];
-    std::vector<int> arr1(10000);
+void without_thread_test(std::vector<int> ans, std::vector<int> arr) {
 
     auto begin = std::chrono::high_resolution_clock::now();
-    for (int i = 0; i < 12; ++i) {
-        sum(std::ref(ans[i]), std::ref(arr1));
+    for (int i = 0; i < ans.size(); ++i) {
+        sum(std::ref(ans[i]), std::ref(arr));
     }
     auto end = std::chrono::high_resolution_clock::now();
     std::cout << std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count();
 }
 
-void raw_thread_test() {
-    int ans[6];
-    std::vector<int> arr1(10000);
-
+void raw_thread_test(std::vector<int> ans, std::vector<int> arr) {
     auto begin = std::chrono::high_resolution_clock::now();
+
+    for (int i = 0; i < ans.size() / 6; ++i) {
+        std::thread t1(sum, std::ref(ans[i]), std::ref(arr));
+        std::thread t2(sum, std::ref(ans[i]), std::ref(arr));
+        std::thread t3(sum, std::ref(ans[i]), std::ref(arr));
+        std::thread t4(sum, std::ref(ans[i]), std::ref(arr));
+        std::thread t5(sum, std::ref(ans[i]), std::ref(arr));
+        std::thread t6(sum, std::ref(ans[i]), std::ref(arr));
+
+        t1.join(); t2.join(); t3.join(); t4.join(); t5.join(); t6.join();
+    }
     
     auto end = std::chrono::high_resolution_clock::now();
     std::cout << std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count();
@@ -156,9 +161,11 @@ void raw_thread_test() {
 
 
 int main() {
-    
-    // thread_pool_test();//  15576 - 17957
-    without_thread_test(); // 20915
+    std::vector<int> ans(12);
+    std::vector<int> arr1(10000);
+    //thread_pool_test(ans, arr1);//  30886
+    //without_thread_test(ans, arr1); // 41784
+    raw_thread_test(ans, arr1); // 31532
 
 
     return 0;
