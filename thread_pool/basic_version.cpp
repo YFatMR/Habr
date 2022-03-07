@@ -161,11 +161,11 @@ void raw_thread_test(std::vector<int> ans, std::vector<int> arr) {
 
 
 int main() {
-    std::vector<int> ans(12);
+    std::vector<int> ans(24);
     std::vector<int> arr1(10000);
-    //thread_pool_test(ans, arr1);//  30886
-    //without_thread_test(ans, arr1); // 41784
-    raw_thread_test(ans, arr1); // 31532
+    //thread_pool_test(ans, arr1);//  52474
+    without_thread_test(ans, arr1); // 83954
+    //raw_thread_test(ans, arr1); // 62386
 
 
     return 0;
