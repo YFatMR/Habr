@@ -4,15 +4,13 @@
 #include <chrono>
 #include <mutex>
 #include <future>
-#include <type_traits>
-#include <unordered_map>
 #include <unordered_set>
-#include <any>
 #include <atomic>
 
 #include <vector>
 #include <chrono>
 
+// C++ 14
 class thread_pool {
 public:
     thread_pool(uint32_t num_threads) {
@@ -160,7 +158,5 @@ int main() {
     thread_pool_test(ans, arr1);//  52474
     //without_thread_test(ans, arr1); // 83954
     //raw_thread_test(ans, arr1); // 62386
-
-
     return 0;
 }
