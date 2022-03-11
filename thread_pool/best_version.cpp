@@ -12,6 +12,7 @@
 #include <variant>
 #include <cassert>
 #include <map>
+#include <utility>
 
 enum class TaskStatus {
     in_q,
@@ -22,24 +23,16 @@ enum class TaskStatus {
 class Task {
 public:
     template <typename FuncRetType, typename ...Args>
-    Task(FuncRetType(*func)(Args...), Args... args) : is_void{ std::is_void_v<FuncRetType> } {
+    Task(FuncRetType(*func)(Args...), Args&&... args) : 
+            is_void{ std::is_void_v<FuncRetType> } {
+
         if constexpr (std::is_void_v<FuncRetType>) {
-            if constexpr (sizeof...(args)) {
-                void_func = std::bind(func, args...);
-            }
-            else {
-                void_func = func;
-            }
+            void_func = std::bind(func, args...);
             any_func = []()->int { return 0; };
-        }
-        else {
+        } else {
             void_func = []()->void {};
             any_func = std::bind(func, args...);
         }
-    }
-
-    Task operator= (const Task& other) {
-        return Task(other);
     }
 
     void operator() () {
@@ -65,7 +58,6 @@ private:
 };
 
 struct TaskInfo {
-
     TaskStatus status = TaskStatus::in_q;
     std::any result;
 };
@@ -73,49 +65,54 @@ struct TaskInfo {
 
 class thread_pool {
 public:
-    thread_pool(uint32_t num_threads) {
+    thread_pool(const uint32_t num_threads) {
         threads.reserve(num_threads);
         for (int i = 0; i < num_threads; ++i) {
-            threads.emplace_back(std::thread(&thread_pool::run, this));
+            threads.emplace_back(&thread_pool::run, this);
         }
     }
 
     template <typename Func, typename ...Args>
-    bool add_task(const std::string label, const Func& func, Args&&... args) {
+    uint64_t add_task(const Func& func, Args&&... args) {
+
+        const uint64_t task_id = last_idx++;
+
         std::unique_lock<std::mutex> lock(tasks_info_mtx);
-        if (tasks_info.find(label) != tasks_info.end()) {
-            std::cerr << "Can't add exist label key!\n";
-            return false;
-        }
-        tasks_info[label] = TaskInfo();
+        tasks_info[task_id] = TaskInfo();
         lock.unlock();
 
         std::lock_guard<std::mutex> q_lock(q_mtx);
-        q.emplace(std::make_pair(Task(func, args...), label));
+        q.emplace(Task(func, std::forward<Args>(args)...), task_id);
         q_cv.notify_one();
-        return true;
+        return task_id;
     }
 
-    void wait(const std::string& label) {
+    void wait(const uint64_t task_id) {
         std::unique_lock<std::mutex> lock(tasks_info_mtx);
-        tasks_info_cv.wait(lock, [this, label]()->bool {return tasks_info.find(label) != tasks_info.end() && tasks_info[label].status == TaskStatus::completed; });
+        tasks_info_cv.wait(lock, [this, task_id]()->bool {
+            return task_id < last_idx && tasks_info[task_id].status == TaskStatus::completed;
+        });
     }
 
-    std::any wait_result(const std::string& label) {
-        std::unique_lock<std::mutex> lock(tasks_info_mtx);
-        tasks_info_cv.wait(lock, [this, label]()->bool {return tasks_info.find(label) != tasks_info.end() && tasks_info[label].status == TaskStatus::completed; });
-        return tasks_info[label].result;
+    std::any wait_result(const uint64_t task_id) {
+        wait(task_id);
+        return tasks_info[task_id].result;
+    }
+
+    template<class T>
+    void wait_result(const uint64_t task_id, T& value) {
+        wait(task_id);
+        value =  std::any_cast<T>(tasks_info[task_id].result);
     }
 
     void wait_all() {
-        std::unique_lock<std::mutex> lock(q_mtx);
-        // And also check that all process not active
-        wait_all_cv.wait(lock, [this]()->bool { return q.empty(); });
+        std::unique_lock<std::mutex> lock(tasks_info_mtx);
+        wait_all_cv.wait(lock, [this]()->bool { return cnt_completed_tasks == last_idx; });
     }
 
-    bool calculated(const std::string& label) {
+    bool calculated(const uint64_t task_id) {
         std::lock_guard<std::mutex> lock(tasks_info_mtx);
-        return tasks_info.find(label) != tasks_info.end() && tasks_info[label].status == TaskStatus::completed;
+        return task_id < last_idx && tasks_info[task_id].status == TaskStatus::completed;
     }
 
     ~thread_pool() {
@@ -133,8 +130,8 @@ private:
             std::unique_lock<std::mutex> lock(q_mtx);
             q_cv.wait(lock, [this]()->bool { return !q.empty() || quite; });
 
-            if (!q.empty()) {
-                std::pair<Task, std::string> task = std::move(q.front());
+            if (!q.empty() && !quite) {
+                std::pair<Task, uint64_t> task = std::move(q.front());
                 q.pop();
                 lock.unlock();
 
@@ -145,28 +142,28 @@ private:
                     tasks_info[task.second].result = task.first.get_result();
                 }
                 tasks_info[task.second].status = TaskStatus::completed;
+                ++cnt_completed_tasks;
             }
             wait_all_cv.notify_all();
             tasks_info_cv.notify_all(); // notify for wait function
         }
     }
 
-    
+    std::vector<std::thread> threads;
 
-    std::queue<std::pair<Task, std::string>> q;
+    std::queue<std::pair<Task, uint64_t>> q;
     std::mutex q_mtx;
     std::condition_variable q_cv;
 
-    std::vector<std::thread> threads;
-
-    std::atomic<bool> quite{ false };
-
-    std::unordered_map<std::string, TaskInfo> tasks_info;
+    std::unordered_map<uint64_t, TaskInfo> tasks_info;
     std::condition_variable tasks_info_cv;
     std::mutex tasks_info_mtx;
 
     std::condition_variable wait_all_cv;
-    
+
+    std::atomic<bool> quite{ false };
+    std::atomic<uint64_t> last_idx{ 0 };
+    std::atomic<uint64_t> cnt_completed_tasks{ 0 };
 };
 
 
@@ -174,7 +171,7 @@ void sum(int a, int b) {
     std::cout << "sum\n";
     using namespace std::chrono_literals;
     //std::this_thread::sleep_for(2000ms);
-    std::this_thread::sleep_for(1000ms);
+    //std::this_thread::sleep_for(1000ms);
     std::cout << "Success" << a + b << std::endl;
     //return a + b;
 }
@@ -183,27 +180,30 @@ int sum2(int a, int b) {
     return a + b;
 }
 
+
+int sum3() {
+    std::cout << "sum3 9" << std::endl;
+    return 4 + 5;
+}
+
+void sum4() {
+    std::cout << "sum4 6436364" << std::endl;
+    //return 4 + 5;
+}
 /*
-* 
+*
 * Не передаётсв bind
 template <typename R, typename Func, typename ...Args>
     bool add_task2(const std::string& label, const std::function<R(Args...)>& fn) {
-
         return true;
     }
-
 */
 
 /*
 std::variant<std::function<std::any()>, std::future<void>>
-
-т к 
-
+т к
 std::variant<std::function<std::any()>, std::function<void()>> yне работает
-
 */
-
-
 
 
 
@@ -211,23 +211,32 @@ int main() {
     // future - храним void 
     // bind - other
     //std::future<void> p = std::async(std::launch::deferred, sum, 2, 3);
-    
+
     //std::invoke_result_t<decltype(sum),int, int> a;
     //a = 10;
 
-
+    
     auto x = std::bind(sum, 3, 2);
     auto x2 = std::bind(sum2, 3, 2);
 
-    
-    thread_pool t(3);
-    
 
-    t.add_task("456", sum2, 100, 300);
-    auto res = std::any_cast<int>(t.wait_result("456"));
+    thread_pool t(3);
+
+
+    auto id = t.add_task(sum2, 100, 300);
+    auto res = std::any_cast<int>(t.wait_result(id));
     std::cout << res << std::endl;
 
+    int res2;
+    t.wait_result(id, res2);
+    std::cout << res2 << std::endl;
 
+    t.add_task(sum3);
+    auto r1 = t.add_task(sum4);
+    
+    t.wait_all();
+
+    //t.wait(r1);
 
     return 0;
 }
