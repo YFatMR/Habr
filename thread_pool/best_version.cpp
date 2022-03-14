@@ -20,16 +20,18 @@ enum class TaskStatus {
 };
 
 
+// C++ 17
 class Task {
 public:
-    template <typename FuncRetType, typename ...Args>
-    Task(FuncRetType(*func)(Args...), Args&&... args) : 
-            is_void{ std::is_void_v<FuncRetType> } {
+    template <typename FuncRetType, typename ...Args, typename ...FuncTypes>
+    Task(FuncRetType(*func)(FuncTypes...), Args&&... args) :
+        is_void{ std::is_void_v<FuncRetType> } {
 
         if constexpr (std::is_void_v<FuncRetType>) {
             void_func = std::bind(func, args...);
             any_func = []()->int { return 0; };
-        } else {
+        }
+        else {
             void_func = []()->void {};
             any_func = std::bind(func, args...);
         }
@@ -72,8 +74,8 @@ public:
         }
     }
 
-    template <typename Func, typename ...Args>
-    uint64_t add_task(const Func& func, Args&&... args) {
+    template <typename Func, typename ...Args, typename ...FuncTypes>
+    uint64_t add_task(Func(*func)(FuncTypes...), Args&&... args) {
 
         const uint64_t task_id = last_idx++;
 
@@ -90,8 +92,8 @@ public:
     void wait(const uint64_t task_id) {
         std::unique_lock<std::mutex> lock(tasks_info_mtx);
         tasks_info_cv.wait(lock, [this, task_id]()->bool {
-            return task_id < last_idx && tasks_info[task_id].status == TaskStatus::completed;
-        });
+            return task_id < last_idx&& tasks_info[task_id].status == TaskStatus::completed;
+            });
     }
 
     std::any wait_result(const uint64_t task_id) {
@@ -102,7 +104,7 @@ public:
     template<class T>
     void wait_result(const uint64_t task_id, T& value) {
         wait(task_id);
-        value =  std::any_cast<T>(tasks_info[task_id].result);
+        value = std::any_cast<T>(tasks_info[task_id].result);
     }
 
     void wait_all() {
@@ -112,7 +114,7 @@ public:
 
     bool calculated(const uint64_t task_id) {
         std::lock_guard<std::mutex> lock(tasks_info_mtx);
-        return task_id < last_idx && tasks_info[task_id].status == TaskStatus::completed;
+        return task_id < last_idx&& tasks_info[task_id].status == TaskStatus::completed;
     }
 
     ~thread_pool() {
@@ -166,40 +168,39 @@ private:
     std::atomic<uint64_t> cnt_completed_tasks{ 0 };
 };
 
-
-void sum(int a, int b) {
-    std::cout << "sum\n";
-    std::cout << "Success" << a + b << std::endl;
-}
-
-int sum2(int a, int b) {
+int int_sum(int a, int b) {
     return a + b;
 }
 
-int sum3() {
-    std::cout << "sum3" << std::endl;
-    return 4 + 5;
+void void_sum(int& c, int a, int b) {
+    c = a + b;
 }
 
-void sum4() {
-    std::cout << "sum4" << std::endl;
+void void_without_argument() {
+    std::cout << "It's OK!" << std::endl;
 }
 
 int main() {
     thread_pool t(3);
-    
-    auto id = t.add_task(sum2, 100, 300);
-    auto res = std::any_cast<int>(t.wait_result(id));
-    std::cout << res << std::endl;
+    int c;
+    t.add_task(int_sum, 2, 3);               // id = 0
+    t.add_task(void_sum, std::ref(c), 4, 6); // id = 1
+    t.add_task(void_without_argument);       // id = 2
 
-    int res2;
-    t.wait_result(id, res2);
-    std::cout << res2 << std::endl;
+    {
+        // variant 1
+        int res;
+        t.wait_result(0, res);
+        std::cout << res << std::endl;
 
-    t.add_task(sum3);
-    auto r1 = t.add_task(sum4);
-    
-    t.wait_all();
+        // variant 2
+        std::cout << std::any_cast<int>(t.wait_result(0)) << std::endl;
+    }
+
+    t.wait(1);
+    std::cout << c << std::endl;
+
+    t.wait_all(); // waiting for task with id 2
 
     return 0;
 }

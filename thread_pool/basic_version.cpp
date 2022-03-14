@@ -33,8 +33,8 @@ public:
     void wait(int64_t task_id) {
         std::unique_lock<std::mutex> lock(completed_task_ids_mtx);
         completed_task_ids_cv.wait(lock, [this, task_id]()->bool {
-            return completed_task_ids.find(task_id) != completed_task_ids.end(); 
-        });
+            return completed_task_ids.find(task_id) != completed_task_ids.end();
+            });
     }
 
     void wait_all() {
@@ -42,7 +42,7 @@ public:
         completed_task_ids_cv.wait(lock, [this]()->bool {
             std::lock_guard<std::mutex> task_lock(completed_task_ids_mtx);
             return q.empty() && last_idx == completed_task_ids.size();
-        });
+            });
     }
 
     bool calculated(int64_t task_id) {
@@ -146,17 +146,40 @@ void raw_thread_test(std::vector<int> ans, std::vector<int> arr) {
 
         t1.join(); t2.join(); t3.join(); t4.join(); t5.join(); t6.join();
     }
-    
+
     auto end = std::chrono::high_resolution_clock::now();
     std::cout << std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count();
 }
 
-
-int main() {
+void run_test() {
     std::vector<int> ans(24);
     std::vector<int> arr1(10000);
     thread_pool_test(ans, arr1);//  52474
-    //without_thread_test(ans, arr1); // 83954
-    //raw_thread_test(ans, arr1); // 62386
+    without_thread_test(ans, arr1); // 83954
+    raw_thread_test(ans, arr1); // 62386
+}
+
+class Test {
+public:
+    void operator() () {
+        std::cout << "Working with functors!\n";
+    }
+};
+
+void sum(int a, int b) {
+    std::cout << a + b << std::endl;
+}
+
+int main() {
+    //run_test();
+
+    Test test;
+    auto res = std::bind(sum, 2, 3);
+
+    thread_pool t(3);
+    t.add_task(test);
+    t.add_task(res);
+    t.wait_all();
+
     return 0;
 }

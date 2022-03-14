@@ -2,12 +2,16 @@
 
 ## Для кого статья?
 
-Статья будет полезна всем, кто хочет окунуться в многопоточное программирование в С++, прочитано много теории, но всё ещё непонятно как использовать эти самые мьютексы на практике
+Статья будет полезна всем, кто хочет разобраться с работой Thread Pool раз и на всегда или же никогда о нём не слышал.
 
 ## Что нового я могу узнать из статьи?
 
 * Кто такой Thread Pool?
-* 
+* Зачем использовать Thread Pool?
+* Логика работы Thread Pool
+* [Реализация](./basic_version.cpp) C++ 14
+* [Реализация](./best_version.cpp) C++ 17
+* Сравнение реализаций
 
 ## Кто такой Thread Pool?
 
@@ -43,7 +47,7 @@ void test_func(int& res, const std::vector<int>& arr) {
 
 Стоит отметить, что у меня на компьютере можно создать максимум 8 потоков и запускался тестовый пример в Visual Studio на платформе Windows. Это значит, что фоновая работа сторонних приложений может создавать флуктуации и при каждом запуске мы будем получать разные времена. (КОД ПРИМЕРОВ!!!)
 
-## Почему 6 потоков не ускорили код в 6 раз?
+## Почему 6 потоков не ускорили код в 6 раз? (ДОПИСАТЬ)
 
 системные прирывания, закон Амдала, возможное вмешательство других приложений
 
@@ -235,6 +239,8 @@ bool calculated(int64_t task_id) {
 
 Если экземпляр класса `thread_pool` удаляется, то деструктор дожидается завершения всех потоков. При этом, если в очереди есть ещё задачи, то каждый поток выполнит ещё одну задачу и завершит работу.
 
+Полный код данной реализации можно посмотреть [ТУТ](./basic_version.cpp)
+
 ## Пример работы с Thread Pool
 
 ```
@@ -293,8 +299,8 @@ int main() {
 Теперь мы можем хранить в нашей очереди `std::function<std::any()>`, так же хочется отметить, что запись `std::future<std::any>` не валидна. Именно так я и сделал в своей первой попытке и получил очень красивый код, который не сильно отличался от изначальной реализации, но тут я столкнулся с проблемой, что `std::any` не может быть типа `void` . Тогда я решил создать класс `Task`, который бы смог хранить в одном случае `std::function<std::any()>` а в другом `std::function<void()>`. Рассмотрим его конструктор.
 
 ```
-template <typename FuncRetType, typename ...Args>
-Task(FuncRetType(*func)(Args...), Args&&... args) :
+template <typename FuncRetType, typename ...Args, typename ...FuncTypes>
+Task(FuncRetType(*func)(FuncTypes...), Args&&... args) :
     is_void{ std::is_void_v<FuncRetType> } {
 
     if constexpr (std::is_void_v<FuncRetType>) {
@@ -308,5 +314,190 @@ Task(FuncRetType(*func)(Args...), Args&&... args) :
 }
 ```
 
+Мы используем `if constexpr` для компиляции только одной ветки условия. Если мы будем использовать обычный `if`, то при получении функции возвращающей `void` компилятор попробует преобразовать `void` в `std::any` и таким образом мы получит мошибку преобразования типа, не смотря на то, что этот каст брудет происходить в другой ветке условия.
 
+Мы используем `typename ...Args` и `typename ...FuncTypes`, чтобы был возможен неявный каст между `std::referense_wrapper` и ссылочным типом, тогда нам в функциях не придётся в сигнатуре явно прописывать `std::referense_wrapper`
 
+`any_func = []()->int { return 0; };` и `void_func = []()->void {};` функции-заглушки. Они позволяют избавиться от лишего условия при вычислении значения:
+
+```
+void operator() () {
+    void_func();
+    any_func_result = any_func();
+}
+```
+
+`has_result` проверяет вернёт ли функция значение или нет, а `get_result` получит его.
+
+```
+bool has_result() {
+    return !is_void;
+}
+
+std::any get_result() const {
+    assert(!is_void);
+    assert(any_func_result.has_value());
+    return any_func_result;
+}
+```
+
+Ещё один вспомогательный класс: `TaskInfo`:
+
+```
+enum class TaskStatus {
+    in_q,
+    completed
+};
+
+struct TaskInfo {
+    TaskStatus status = TaskStatus::in_q;
+    std::any result;
+};
+```
+
+Данная структура хранит информацию о задаче: статус и возможный результат. Если структура будет возвращать `void`, то поле `result` останется незаполненным.
+
+Рассмотрим приватные поля класса `thread_pool`
+
+```
+std::vector<std::thread> threads;
+
+// очередь с парой задача, номер задачи
+std::queue<std::pair<Task, uint64_t>> q;
+
+std::mutex q_mtx;
+std::condition_variable q_cv;
+
+// Будем создавать ключ как только пришла новая задача и изменять её статус при завершении
+std::unordered_map<uint64_t, TaskInfo> tasks_info;
+
+std::condition_variable tasks_info_cv;
+std::mutex tasks_info_mtx;
+
+std::condition_variable wait_all_cv;
+
+std::atomic<bool> quite{ false };
+std::atomic<uint64_t> last_idx{ 0 };
+
+// переменная считающая кол-во выполненых задач
+std::atomic<uint64_t> cnt_completed_tasks{ 0 };
+```
+
+В отличает от прошлой реализации нам понадобиться переменная `cnt_completed_tasks` (в прошлой реализации у нас был отдельный контейнер для завершённых задач и кол-во завершённых задач мы получали по размеру этого контейнера), для подсчёта кол-ва завершённых задач. Эта переменная будет использоваться в функции `wait_all` для определения того, что все задачи завершились.
+
+Так же отдельно рассмотрим 3 разных функции ожидания результата:
+
+```
+void wait(const uint64_t task_id) {
+    std::unique_lock<std::mutex> lock(tasks_info_mtx);
+    tasks_info_cv.wait(lock, [this, task_id]()->bool {
+        return task_id < last_idx&& tasks_info[task_id].status == TaskStatus::completed;
+    });
+}
+
+std::any wait_result(const uint64_t task_id) {
+    wait(task_id);
+    return tasks_info[task_id].result;
+}
+
+template<class T>
+void wait_result(const uint64_t task_id, T& value) {
+    wait(task_id);
+    value = std::any_cast<T>(tasks_info[task_id].result);
+}
+```
+* `void wait(const uint64_t task_id)` - используется для ожидании задачи, которая возвращает void
+* `std::any wait_result(const uint64_t task_id)` и `void wait_result(const uint64_t task_id, T& value)` разными способами возвращают результат.
+
+`std::any wait_result(const uint64_t task_id)` вернёт `std::any` и пользователь сам должен будет сделать `cast` к нужному типу. Шаблонная функция `void wait_result(const uint64_t task_id, T& value)` принимает вторым аргументом ссылку на переменную, куда и будет положено новое значение и явный `cast` пользователь не должен будет делать.
+
+В остальном код очень похож на предыдущую версию и код новой версии вы можете найти [ТУТ](./best_version.cpp)
+
+## Использование thread_pool С++ 17
+
+```
+int int_sum(int a, int b) {
+    return a + b;
+}
+
+void void_sum(int& c, int a, int b) {
+    c = a + b;
+}
+
+void void_without_argument() {
+    std::cout << "It's OK!" << std::endl;
+}
+
+int main() {
+    thread_pool t(3);
+    int c;
+    t.add_task(int_sum, 2, 3);               // id = 0
+    t.add_task(void_sum, std::ref(c), 4, 6); // id = 1
+    t.add_task(void_without_argument);       // id = 2
+
+    {
+        // variant 1
+        int res;
+        t.wait_result(0, res);
+        std::cout << res << std::endl;
+
+        // variant 2
+        std::cout << std::any_cast<int>(t.wait_result(0)) << std::endl;
+    }
+
+    t.wait(1);
+    std::cout << c << std::endl;
+
+    t.wait_all(); // waiting for task with id 2
+
+    return 0;
+}
+```
+
+В данном примере рассмотрены 2 способа получения значения через функцию `wait_result`. Мне лично больше нравится 2 вариант. Не смотря на то, что нужно делать каст, получается компактное решение.
+
+## У нас действительно получилась версия лучше предыдущей?
+
+И да, и нет. После анализа и получил следующие результаты:
+
+| Тип передаваемого аргумента при создании новой задачи | thread_pool c++ 14 | thread_pool c++ 17 |
+|---|---|---|
+| функция возвращающая void | + | + |
+| функция возвращающая всё кроме void | + | - |
+| std::bind | - | + |
+| функтор | - | + |
+
+Пример с функтором и `std::bind`:
+
+```
+class Test {
+public:
+    void operator() () {
+        std::cout << "Working with functors!\n";
+    }
+};
+
+void sum(int a, int b) {
+    std::cout << a + b << std::endl;
+}
+
+int main() {
+    Test test;
+    auto res = std::bind(sum, 2, 3);
+
+    thread_pool t(3);
+    t.add_task(test);
+    t.add_task(res);
+    t.wait_all();
+
+    return 0;
+}
+```
+
+## А почему не получилось сделать лучше?
+
+Изначально задумывалось реализовать thread_pool, который сам сможет определять тип возвращаемого значения и исходя из этого типа формировать объект `Task`, но тип возвращаемого значения `std::bind` нельзя явно получить через `std::invoke_result`, поэтому пришлось пойти на некоторые уступки. 
+
+## Итог
+
+Мы получили 2 разные версии `thred_pool`. Сложно сказать какая из них лучше. Мне лично больше нравится версия с `C++ 17`. Она позволяет не таскать за собой много переменных как ссылки на результат, а хранит всё внутри себя. Да, эта версия уступает по функциональности, но использование функторов и `std::bind` не частая практика, поэтому именно это вариант я и считаю лучшим.
