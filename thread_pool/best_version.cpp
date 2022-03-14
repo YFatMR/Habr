@@ -169,60 +169,25 @@ private:
 
 void sum(int a, int b) {
     std::cout << "sum\n";
-    using namespace std::chrono_literals;
-    //std::this_thread::sleep_for(2000ms);
-    //std::this_thread::sleep_for(1000ms);
     std::cout << "Success" << a + b << std::endl;
-    //return a + b;
 }
 
 int sum2(int a, int b) {
     return a + b;
 }
 
-
 int sum3() {
-    std::cout << "sum3 9" << std::endl;
+    std::cout << "sum3" << std::endl;
     return 4 + 5;
 }
 
 void sum4() {
-    std::cout << "sum4 6436364" << std::endl;
-    //return 4 + 5;
+    std::cout << "sum4" << std::endl;
 }
-/*
-*
-* Не передаётсв bind
-template <typename R, typename Func, typename ...Args>
-    bool add_task2(const std::string& label, const std::function<R(Args...)>& fn) {
-        return true;
-    }
-*/
-
-/*
-std::variant<std::function<std::any()>, std::future<void>>
-т к
-std::variant<std::function<std::any()>, std::function<void()>> yне работает
-*/
-
-
 
 int main() {
-    // future - храним void 
-    // bind - other
-    //std::future<void> p = std::async(std::launch::deferred, sum, 2, 3);
-
-    //std::invoke_result_t<decltype(sum),int, int> a;
-    //a = 10;
-
-    
-    auto x = std::bind(sum, 3, 2);
-    auto x2 = std::bind(sum2, 3, 2);
-
-
     thread_pool t(3);
-
-
+    
     auto id = t.add_task(sum2, 100, 300);
     auto res = std::any_cast<int>(t.wait_result(id));
     std::cout << res << std::endl;
@@ -235,8 +200,6 @@ int main() {
     auto r1 = t.add_task(sum4);
     
     t.wait_all();
-
-    //t.wait(r1);
 
     return 0;
 }
