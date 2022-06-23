@@ -97,12 +97,14 @@ public:
     }
 
     std::any wait_result(const uint64_t task_id) {
+        std::unique_lock<std::mutex> lock(tasks_info_mtx);
         wait(task_id);
         return tasks_info[task_id].result;
     }
 
     template<class T>
     void wait_result(const uint64_t task_id, T& value) {
+        std::unique_lock<std::mutex> lock(tasks_info_mtx);
         wait(task_id);
         value = std::any_cast<T>(tasks_info[task_id].result);
     }
