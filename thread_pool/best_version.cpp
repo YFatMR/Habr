@@ -13,6 +13,7 @@
 #include <cassert>
 #include <map>
 #include <utility>
+#include <functional>
 
 enum class TaskStatus {
     in_q,
@@ -92,20 +93,24 @@ public:
     void wait(const uint64_t task_id) {
         std::unique_lock<std::mutex> lock(tasks_info_mtx);
         tasks_info_cv.wait(lock, [this, task_id]()->bool {
-            return task_id < last_idx&& tasks_info[task_id].status == TaskStatus::completed;
-            });
+            return task_id < last_idx && tasks_info[task_id].status == TaskStatus::completed;
+        });
     }
 
     std::any wait_result(const uint64_t task_id) {
         std::unique_lock<std::mutex> lock(tasks_info_mtx);
-        wait(task_id);
+        tasks_info_cv.wait(lock, [this, task_id]()->bool {
+            return task_id < last_idx && tasks_info[task_id].status == TaskStatus::completed;
+        });
         return tasks_info[task_id].result;
     }
 
     template<class T>
     void wait_result(const uint64_t task_id, T& value) {
         std::unique_lock<std::mutex> lock(tasks_info_mtx);
-        wait(task_id);
+        tasks_info_cv.wait(lock, [this, task_id]()->bool {
+            return task_id < last_idx && tasks_info[task_id].status == TaskStatus::completed;
+        });
         value = std::any_cast<T>(tasks_info[task_id].result);
     }
 
